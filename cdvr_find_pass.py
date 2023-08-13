@@ -12,6 +12,8 @@ Disclaimer: this is an unofficial script that is NOT supported by the developers
 Version History:
 - 2023.06.24.2152: Internal use and testing.
 - 2023.08.12.2305: First public release
+- 2023.08.13.1900: Removed the dependency to the dateutil module. 
+                   Added channel number and start_time as program attributes.
 """
 
 ################################################################################
@@ -22,7 +24,6 @@ Version History:
 
 import argparse, requests, sys
 from datetime import datetime
-from dateutil import tz
 
 ################################################################################
 #                                                                              #
@@ -32,7 +33,7 @@ from dateutil import tz
 
 DEFAULT_PORT_NUMBER  = '8089'
 LOOPBACK_ADDRESS     = '127.0.0.1'
-VERSION              = '2023.08.12.2305'
+VERSION              = '2023.08.13.1900'
 
 ################################################################################
 #                                                                              #
@@ -54,10 +55,12 @@ class Program:
         '''Given the program in json format, extract the useful information'''
         self.program        = program_json
         self.category       = self._get_category()
+        self.channel        = self._get_channel()
         self.episode_number = self.program['Airing'].get('EpisodeNumber', None)
         self.file_name      = self._get_file_name()
         self.pass_id        = self.program.get('RuleID', None)
         self.season_number  = self.program['Airing'].get('SeasonNumber', None)
+        self.start_time     = self._get_start_time()
         self.title          = self.program['Airing']['Title']
         
     def _get_category(self):
@@ -69,7 +72,18 @@ class Program:
             category = categories[0]
             
         return category
-        
+
+    def _get_channel(self):
+        '''Return the channel number, if it exists in the json data.'''
+        channel = 'N/A'
+
+        airing = self.program.get('Airing', None)
+
+        if airing:
+            channel = airing.get('Channel', '?')
+
+        return channel
+
     def _get_file_name(self):
         '''
         Retrieve the file name from the media info of this program.
@@ -87,6 +101,20 @@ class Program:
             
         return file_name
     
+    def _get_start_time(self):
+        '''
+        If it exists in the program data, return the start time of the recording
+        as a human readable string.
+        '''
+        start_time = None
+
+        timestamp = self.program.get('Time', None)
+
+        if timestamp:
+            start_time = convert_epoch_timestamp_to_readable_string(timestamp)
+
+        return start_time
+
     def is_imported(self):
         '''Return True or False: True if the program info contains the key "ImportPath".'''
         return "ImportPath" in self.program.keys()
@@ -109,28 +137,17 @@ class Program:
 #                                                                              #
 ################################################################################
 
-def convert_utc_time_to_local_time(utc_time):
+def convert_epoch_timestamp_to_readable_string(epoch_timestamp):
     '''
-    Takes UTC time in the format "2023-06-24T15:00Z" and convert it to the
-    local time in the correct time zone.
-    It will return this format: "Saturday, June 24, 2023 11:00:00 AM EDT".
+    Takes the given epoch timestamp and converts it to a simple
+    string that is easier to read: "Saturday, June 24, 2023 @ 15:00:00".
     '''
     
-    utc_format = "%Y-%m-%dT%H:%MZ"
+    dt_object = datetime.fromtimestamp(epoch_timestamp)
 
-    # Convert the UTC time string to a datetime object
-    utc_dt = datetime.strptime(utc_time, utc_format)
+    readable_string = dt_object.strftime('%A, %m/%d/%Y @ %H:%M:%S')
 
-    # Set the timezone for the datetime object to UTC
-    utc_dt = utc_dt.replace(tzinfo=tz.tzutc())
-
-    # Convert the UTC datetime object to the local timezone
-    local_dt = utc_dt.astimezone(tz.tzlocal())
-
-    # Format the local datetime object as a string
-    local_time = local_dt.strftime('%A, %B %d, %Y %I:%M:%S %p %Z')
-
-    return local_time
+    return readable_string
 
 def display_server_url():
     '''Show on the screen the full URL of the Channels DVR server.'''
@@ -258,8 +275,6 @@ def display_passes(passes, programs):
                 string_to_print += f'E{program.episode_number}'
                 string_to_print += ' '
         
-        raw  = get_raw_data(program)
-        
         if program.is_imported():
             string_to_print += f'is an import:\n'
             string_to_print += f'    "{file_name}"\n'
@@ -269,9 +284,7 @@ def display_passes(passes, programs):
             if file_name:
                 string_to_print += f'    "{file_name}"\n'
             else:
-                if raw:
-                    start_time = convert_utc_time_to_local_time(raw['startTime'])
-                    string_to_print += f'   will be recorded on {start_time}\n'
+                string_to_print += f'   will be recorded on {program.start_time} on channel {program.channel}\n'
         else:
             pass_name = passes.get(program.pass_id, None)
 
@@ -285,12 +298,7 @@ def display_passes(passes, programs):
                 string_to_print += f'    "{file_name}"\n'
             else:
                 # Program in the schedule
-                if raw:
-                    # The raw data is not always provided, it depends on the source
-                    start_time = raw.get('startTime', None)
-                    if start_time:
-                        start_time = convert_utc_time_to_local_time(start_time)
-                        string_to_print += f'   will be recorded on {start_time}\n'
+                string_to_print += f'   will be recorded on {program.start_time} on channel {program.channel}\n'
         
         print(string_to_print)
         
